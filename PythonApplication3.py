@@ -29,7 +29,7 @@ FLU_URL = "https://drive.google.com/uc?export=download&id=1moYESuDnMJSwfmAbchv8u
 # ================= LOAD DATA =================
 @st.cache_data(ttl=86400)
 def load_covid_data():
-    df = pd.read_csv(COVID_URL, parse_dates=["Date"])
+    df = pd.read_csv(COVID_LOCAL_PATH, parse_dates=["Date"])
     countries = sorted(df["Country"].unique())
     years = sorted(df["Date"].dt.year.unique())
     return df, countries, years
@@ -219,3 +219,4 @@ if analyze_button:
 else:
 
     st.info("👈 Select a disease, enter or choose countries in the sidebar, then click **Analyze Data** to generate the dashboard.")
+
