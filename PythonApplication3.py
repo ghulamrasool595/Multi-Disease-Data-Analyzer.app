@@ -2,7 +2,7 @@
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import os
+
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -24,7 +24,7 @@ st.markdown("""
 
 # ================= DATA SOURCES =================
 COVID_URL = "https://raw.githubusercontent.com/datasets/covid-19/master/data/countries-aggregated.csv"
-FLU_LOCAL_PATH = "flewdata.csv"
+FLU_URL = "https://drive.google.com/uc?export=download&id=1moYESuDnMJSwfmAbchv8uRlvFB0Fp5Q0"
 
 # ================= LOAD DATA =================
 @st.cache_data(ttl=86400)
@@ -217,4 +217,5 @@ if analyze_button:
         st.info("COVID-19: cumulative daily (up to 2022). Influenza: weekly positives (FluNet, recent).")
 
 else:
+
     st.info("👈 Select a disease, enter or choose countries in the sidebar, then click **Analyze Data** to generate the dashboard.")
