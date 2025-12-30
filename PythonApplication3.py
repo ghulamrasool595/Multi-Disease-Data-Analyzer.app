@@ -36,10 +36,8 @@ def load_covid_data():
 
 @st.cache_data(ttl=86400)
 def load_flu_data():
-    if not os.path.exists(FLU_LOCAL_PATH):
-        st.error(f"Flu dataset '{FLU_LOCAL_PATH}' not found! Place it in the same folder.")
-        st.stop()
-    df = pd.read_csv(FLU_LOCAL_PATH)
+    df = pd.read_csv(FLU_URL)
+
     df = df.rename(columns={
         "COUNTRY_AREA_TERRITORY": "Country",
         "ISO_WEEKSTARTDATE": "Date",
@@ -48,11 +46,14 @@ def load_flu_data():
         "INF_A": "Influenza_A",
         "INF_B": "Influenza_B"
     })
-    df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
-    df["Cases"] = pd.to_numeric(df["Cases"], errors='coerce').fillna(0)
+
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["Cases"] = pd.to_numeric(df["Cases"], errors="coerce").fillna(0)
     df = df.dropna(subset=["Date", "Country"])
+
     countries = sorted(df["Country"].unique())
     years = sorted(df["Year"].unique())
+
     return df, countries, years
 
 covid_df, covid_countries, covid_years = load_covid_data()
@@ -219,4 +220,5 @@ if analyze_button:
 else:
 
     st.info("👈 Select a disease, enter or choose countries in the sidebar, then click **Analyze Data** to generate the dashboard.")
+
 
