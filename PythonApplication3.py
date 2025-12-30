@@ -2,7 +2,7 @@
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-
+import os
 
 # ================= PAGE CONFIG =================
 st.set_page_config(
@@ -23,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================= DATA SOURCES =================
-COVID_URL = "https://raw.githubusercontent.com/datasets/covid-19/master/data/countries-aggregated.csv"
+COVID_LOCAL_PATH = "covid.csv"
 FLU_URL = "https://drive.google.com/uc?export=download&id=1moYESuDnMJSwfmAbchv8uRlvFB0Fp5Q0"
 
 # ================= LOAD DATA =================
