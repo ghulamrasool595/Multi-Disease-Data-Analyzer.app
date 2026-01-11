@@ -230,6 +230,9 @@ if analyze_button:
         if selected_year != "All Years":
             df = df[df["Date"].dt.year == int(selected_year)]
         
+        # Apply Rolling Average for Smoothing
+        df['Smoothed_Prevalence'] = df['Value'].rolling(window=7).mean()
+
         # Metrics
         if disease == "COVID-19":
             df["Confirmed"] = pd.to_numeric(df["Confirmed"], errors='coerce').fillna(0)
@@ -283,27 +286,7 @@ if analyze_button:
                 st.plotly_chart(fig, use_container_width=True)
                 st.markdown('</div>', unsafe_allow_html=True)
         
-        # Comparison bar
-        st.header(f"Yearly {metric_label} Comparison")
-        with st.container():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            comparison_data = {}
-            for c in valid_countries:
-                cdf = df[df["Country"] == c]
-                if disease == "Diabetes (Worldwide)":
-                    comparison_data[c] = cdf.groupby(cdf["Date"].dt.year)[main_metric].mean()
-                else:
-                    comparison_data[c] = cdf.groupby(cdf["Date"].dt.year)[main_metric].sum()
-
-            comparison_df = pd.DataFrame(comparison_data).reindex(years, fill_value=0)
-            melted = comparison_df.reset_index().melt(id_vars="Date", var_name="Country", value_name=metric_label)
-            fig = px.bar(melted, x="Date", y=metric_label, color="Country", barmode="group")
-            fig.update_layout(height=500, margin=dict(l=20,r=20,t=20,b=20))
-            fig.update_yaxes(tickformat=",")
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Time series
+        # Time series (Smoothed Line)
         st.header(f"{new_label} Over Time (7-period Rolling Average)")
         with st.container():
             st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -321,42 +304,6 @@ if analyze_button:
             fig.update_yaxes(tickformat=",")
             st.plotly_chart(fig, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Summary table
-        st.header("Latest Cumulative/Total Summary")
-        with st.container():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            summary = []
-            for country in valid_countries:
-                country_data = df[df["Country"] == country]
-                if not country_data.empty:
-                    latest = country_data.iloc[-1]
-                    total_value = latest[main_metric]
-
-                    if disease == "Diabetes (Worldwide)":
-                        summary.append({
-                            "Country": country,
-                            "Latest Date": latest["Date"].date(),
-                            f"Latest {metric_label}": float(total_value) if pd.notna(total_value) else 0.0
-                        })
-                    else:
-                        total_int = int(total_value) if pd.notna(total_value) else 0
-                        summary.append({
-                            "Country": country,
-                            "Latest Date": latest["Date"].date(),
-                            f"Total {metric_label}": total_int
-                        })
-            summary_df = pd.DataFrame(summary).set_index("Country")
-
-            if disease == "Diabetes (Worldwide)":
-                styled = summary_df.style.format({f"Latest {metric_label}": "{:.2f}"}).background_gradient(cmap="Greens")
-            else:
-                styled = summary_df.style.format({f"Total {metric_label}": "{:,.0f}"}).background_gradient(cmap="Blues")
-
-            st.dataframe(styled, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.info("COVID-19: cumulative daily (up to 2022). Influenza: weekly positives (FluNet, recent). Diabetes: worldwide prevalence (%) by year.")
 
 else:
     st.info("👈 Select a disease, enter or choose countries in the sidebar, then click **Analyze Data** to generate the dashboard.")
