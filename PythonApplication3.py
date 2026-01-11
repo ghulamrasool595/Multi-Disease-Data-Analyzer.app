@@ -25,7 +25,7 @@ st.markdown("""
 COVID_LOCAL_PATH = "covid.csv"
 FLU_URL = "https://drive.google.com/uc?export=download&id=1moYESuDnMJSwfmAbchv8uRlvFB0Fp5Q0"
 
-# ✅ Diabetes Google Drive CSV (your file)
+# ✅ Diabetes Google Drive file (your link -> converted to direct download)
 DIABETES_URL = "https://drive.google.com/uc?export=download&id=1FXRoXPDTstl35YeODJsxfFjyEMV-LznR"
 
 # ================= LOAD DATA =================
@@ -58,51 +58,94 @@ def load_flu_data():
 
     return df, countries, years
 
-# ✅ Diabetes loader (keeps your app logic same: needs Country + Date)
+# ✅ Diabetes loader (supports BOTH long + wide formats automatically)
 @st.cache_data(ttl=86400)
 def load_diabetes_data():
-    df = pd.read_csv(DIABETES_URL)
+    # Read CSV (fallback for semicolon separated)
+    try:
+        df = pd.read_csv(DIABETES_URL)
+    except Exception:
+        df = pd.read_csv(DIABETES_URL, sep=";")
 
-    # Try to normalize common column names into: Country, Year, Value
     df.columns = [c.strip() for c in df.columns]
 
-    rename_map = {}
-    for c in df.columns:
-        lc = c.lower().strip()
-        if lc in ["country", "entity", "location", "country_name"]:
-            rename_map[c] = "Country"
-        elif lc in ["year", "time"]:
-            rename_map[c] = "Year"
-        elif lc in ["value", "prevalence", "diabetes", "diabetes_prevalence", "diabetes prevalence", "diabetes prevalence (%)", "sh.sta.diab.zs"]:
-            rename_map[c] = "Value"
-
-    df = df.rename(columns=rename_map)
-
-    # If Value not found by name, choose first numeric column that's not Year
-    if "Value" not in df.columns:
-        numeric_candidates = []
+    # Detect Country column
+    country_candidates = [
+        "Country", "country", "Entity", "entity", "Location", "location",
+        "COUNTRY", "Country Name", "country_name", "COUNTRY_NAME"
+    ]
+    country_col = next((c for c in country_candidates if c in df.columns), None)
+    if country_col is None:
         for c in df.columns:
-            if c in ["Country", "Year"]:
+            if "country" in c.lower() or "entity" in c.lower() or "location" in c.lower():
+                country_col = c
+                break
+    if country_col is None:
+        st.error(f"❌ Diabetes file: Could not find a Country column. Columns found: {list(df.columns)}")
+        st.stop()
+
+    # Detect WIDE format years as columns
+    year_cols = [c for c in df.columns if str(c).strip().isdigit() and len(str(c).strip()) == 4]
+    if len(year_cols) >= 2:
+        df = df.rename(columns={country_col: "Country"})
+        df_long = df.melt(
+            id_vars=["Country"],
+            value_vars=year_cols,
+            var_name="Year",
+            value_name="Value"
+        )
+        df_long["Year"] = pd.to_numeric(df_long["Year"], errors="coerce")
+        df_long["Value"] = pd.to_numeric(df_long["Value"], errors="coerce").fillna(0)
+        df_long = df_long.dropna(subset=["Country", "Year"])
+        df_long["Year"] = df_long["Year"].astype(int)
+        df_long["Date"] = pd.to_datetime(df_long["Year"].astype(str) + "-01-01", errors="coerce")
+        df_long = df_long.dropna(subset=["Date"])
+        countries = sorted(df_long["Country"].astype(str).str.strip().unique())
+        years = sorted(df_long["Year"].unique())
+        return df_long, countries, years
+
+    # LONG format: find Year + Value
+    year_candidates = ["Year", "year", "TIME", "time", "ISO_YEAR", "iso_year"]
+    year_col = next((c for c in year_candidates if c in df.columns), None)
+
+    if year_col is None:
+        date_candidates = ["Date", "date", "TIME_PERIOD", "time_period"]
+        date_col = next((c for c in date_candidates if c in df.columns), None)
+        if date_col:
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+            df["Year"] = df[date_col].dt.year
+            year_col = "Year"
+
+    if year_col is None:
+        st.error(f"❌ Diabetes file: Could not find a Year column (and no year columns like 2000,2001,...). Columns: {list(df.columns)}")
+        st.stop()
+
+    value_candidates = [
+        "Value", "value", "Prevalence", "prevalence",
+        "Diabetes", "diabetes", "Diabetes prevalence", "Diabetes prevalence (%)",
+        "SH.STA.DIAB.ZS"
+    ]
+    value_col = next((c for c in value_candidates if c in df.columns), None)
+
+    if value_col is None:
+        for c in df.columns:
+            if c in [country_col, year_col]:
                 continue
             s = pd.to_numeric(df[c], errors="coerce")
             if s.notna().mean() > 0.5:
-                numeric_candidates.append(c)
-        if numeric_candidates:
-            df = df.rename(columns={numeric_candidates[0]: "Value"})
+                value_col = c
+                break
 
-    # Must-have columns
-    if not {"Country", "Year", "Value"}.issubset(df.columns):
-        st.error("Diabetes CSV must contain columns like Country/Entity, Year, and Value/Prevalence.")
+    if value_col is None:
+        st.error(f"❌ Diabetes file: Could not find a numeric Value column. Columns: {list(df.columns)}")
         st.stop()
 
+    df = df.rename(columns={country_col: "Country", year_col: "Year", value_col: "Value"})
     df["Country"] = df["Country"].astype(str).str.strip()
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
     df["Value"] = pd.to_numeric(df["Value"], errors="coerce").fillna(0)
-
     df = df.dropna(subset=["Country", "Year"])
     df["Year"] = df["Year"].astype(int)
-
-    # Create Date column so the rest of your dashboard works without changes
     df["Date"] = pd.to_datetime(df["Year"].astype(str) + "-01-01", errors="coerce")
     df = df.dropna(subset=["Date"])
 
@@ -110,6 +153,7 @@ def load_diabetes_data():
     years = sorted(df["Year"].unique())
     return df, countries, years
 
+# Load datasets
 covid_df, covid_countries, covid_years = load_covid_data()
 flu_df, flu_countries, flu_years = load_flu_data()
 diabetes_df, diabetes_countries, diabetes_years = load_diabetes_data()
@@ -138,10 +182,8 @@ with st.sidebar:
         df_source = diabetes_df
     
     st.markdown("### Country Selection")
-    # EMPTY default — no auto-selected countries
     user_input = st.text_input("Enter countries (comma-separated) or type 'all'", "")
     
-    # Process input only when user clicks Analyze
     processed_countries = []
     if user_input.strip():
         if user_input.lower().strip() == "all":
@@ -157,13 +199,12 @@ with st.sidebar:
                     matches = [c for c in all_countries if c.lower() == p.lower()]
                     if matches:
                         processed_countries.append(matches[0])
-        processed_countries = list(set(processed_countries))  # dedupe
+        processed_countries = list(set(processed_countries))
     
-    # Multiselect starts empty and shows processed ones as default after input
     selected_countries = st.multiselect(
         "Selected Countries",
         all_countries,
-        default=processed_countries  # only filled after user types something
+        default=processed_countries
     )
     
     st.markdown("### Time Period")
@@ -180,7 +221,7 @@ if analyze_button:
     if not selected_countries:
         st.warning("Please select at least one country before analyzing.")
     else:
-        valid_countries = selected_countries  # already validated via multiselect
+        valid_countries = selected_countries
         st.success(f"Analyzing {disease} for: {', '.join(valid_countries)}")
         
         df = df_source[df_source["Country"].isin(valid_countries)].copy()
@@ -224,15 +265,19 @@ if analyze_button:
                 st.subheader(country)
                 country_df = df[df["Country"] == country]
 
-                # Diabetes is prevalence (not cumulative), so use mean per year (safe)
+                # Diabetes is prevalence (not cumulative), so mean per year is correct
                 if disease == "Diabetes (Worldwide)":
                     yearly = country_df.groupby(country_df["Date"].dt.year)[main_metric].mean().reindex(years, fill_value=0)
                 else:
                     yearly = country_df.groupby(country_df["Date"].dt.year)[main_metric].sum().reindex(years, fill_value=0)
 
-                fig = px.bar(yearly.reset_index(), x="Date", y=main_metric,
-                             color_discrete_sequence=color_sequence,
-                             labels={"Date": "Year", main_metric: metric_label})
+                fig = px.bar(
+                    yearly.reset_index(),
+                    x="Date",
+                    y=main_metric,
+                    color_discrete_sequence=color_sequence,
+                    labels={"Date": "Year", main_metric: metric_label}
+                )
                 fig.update_layout(height=400, margin=dict(l=20,r=20,t=20,b=20), showlegend=False)
                 fig.update_yaxes(tickformat=",")
                 st.plotly_chart(fig, use_container_width=True)
@@ -242,7 +287,6 @@ if analyze_button:
         st.header(f"Yearly {metric_label} Comparison")
         with st.container():
             st.markdown('<div class="card">', unsafe_allow_html=True)
-
             comparison_data = {}
             for c in valid_countries:
                 cdf = df[df["Country"] == c]
@@ -268,8 +312,12 @@ if analyze_button:
                 ts = df[df["Country"] == country].set_index("Date")[new_metric].rolling(7, min_periods=1).mean()
                 if ts.sum() > 0:
                     fig.add_trace(go.Scatter(x=ts.index, y=ts.values, mode="lines", name=country))
-            fig.update_layout(height=500, xaxis_title="Date", yaxis_title=new_label,
-                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            fig.update_layout(
+                height=500,
+                xaxis_title="Date",
+                yaxis_title=new_label,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
             fig.update_yaxes(tickformat=",")
             st.plotly_chart(fig, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -298,7 +346,6 @@ if analyze_button:
                             "Latest Date": latest["Date"].date(),
                             f"Total {metric_label}": total_int
                         })
-
             summary_df = pd.DataFrame(summary).set_index("Country")
 
             if disease == "Diabetes (Worldwide)":
@@ -309,7 +356,7 @@ if analyze_button:
             st.dataframe(styled, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
         
-        st.info("COVID-19: cumulative daily (up to 2022). Influenza: weekly positives (FluNet, recent). Diabetes: prevalence (%) by year.")
+        st.info("COVID-19: cumulative daily (up to 2022). Influenza: weekly positives (FluNet, recent). Diabetes: worldwide prevalence (%) by year.")
 
 else:
     st.info("👈 Select a disease, enter or choose countries in the sidebar, then click **Analyze Data** to generate the dashboard.")
