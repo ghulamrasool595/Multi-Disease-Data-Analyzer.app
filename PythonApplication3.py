@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -24,6 +24,9 @@ st.markdown("""
 # ================= DATA SOURCES =================
 COVID_LOCAL_PATH = "covid.csv"
 FLU_URL = "https://drive.google.com/uc?export=download&id=1moYESuDnMJSwfmAbchv8uRlvFB0Fp5Q0"
+
+# ✅ Diabetes Google Drive CSV (your file)
+DIABETES_URL = "https://drive.google.com/uc?export=download&id=1FXRoXPDTstl35YeODJsxfFjyEMV-LznR"
 
 # ================= LOAD DATA =================
 @st.cache_data(ttl=86400)
@@ -55,8 +58,61 @@ def load_flu_data():
 
     return df, countries, years
 
+# ✅ Diabetes loader (keeps your app logic same: needs Country + Date)
+@st.cache_data(ttl=86400)
+def load_diabetes_data():
+    df = pd.read_csv(DIABETES_URL)
+
+    # Try to normalize common column names into: Country, Year, Value
+    df.columns = [c.strip() for c in df.columns]
+
+    rename_map = {}
+    for c in df.columns:
+        lc = c.lower().strip()
+        if lc in ["country", "entity", "location", "country_name"]:
+            rename_map[c] = "Country"
+        elif lc in ["year", "time"]:
+            rename_map[c] = "Year"
+        elif lc in ["value", "prevalence", "diabetes", "diabetes_prevalence", "diabetes prevalence", "diabetes prevalence (%)", "sh.sta.diab.zs"]:
+            rename_map[c] = "Value"
+
+    df = df.rename(columns=rename_map)
+
+    # If Value not found by name, choose first numeric column that's not Year
+    if "Value" not in df.columns:
+        numeric_candidates = []
+        for c in df.columns:
+            if c in ["Country", "Year"]:
+                continue
+            s = pd.to_numeric(df[c], errors="coerce")
+            if s.notna().mean() > 0.5:
+                numeric_candidates.append(c)
+        if numeric_candidates:
+            df = df.rename(columns={numeric_candidates[0]: "Value"})
+
+    # Must-have columns
+    if not {"Country", "Year", "Value"}.issubset(df.columns):
+        st.error("Diabetes CSV must contain columns like Country/Entity, Year, and Value/Prevalence.")
+        st.stop()
+
+    df["Country"] = df["Country"].astype(str).str.strip()
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
+    df["Value"] = pd.to_numeric(df["Value"], errors="coerce").fillna(0)
+
+    df = df.dropna(subset=["Country", "Year"])
+    df["Year"] = df["Year"].astype(int)
+
+    # Create Date column so the rest of your dashboard works without changes
+    df["Date"] = pd.to_datetime(df["Year"].astype(str) + "-01-01", errors="coerce")
+    df = df.dropna(subset=["Date"])
+
+    countries = sorted(df["Country"].unique())
+    years = sorted(df["Year"].unique())
+    return df, countries, years
+
 covid_df, covid_countries, covid_years = load_covid_data()
 flu_df, flu_countries, flu_years = load_flu_data()
+diabetes_df, diabetes_countries, diabetes_years = load_diabetes_data()
 
 shortname_map = {
     "UAE": "United Arab Emirates", "KSA": "Saudi Arabia", "SAUDI": "Saudi Arabia",
@@ -66,16 +122,20 @@ shortname_map = {
 # ================= SIDEBAR =================
 with st.sidebar:
     st.header("Analysis Settings")
-    disease = st.selectbox("Select Disease", ["COVID-19", "Influenza (FluNet)"])
+    disease = st.selectbox("Select Disease", ["COVID-19", "Influenza (FluNet)", "Diabetes (Worldwide)"])
     
     if disease == "COVID-19":
         all_countries = covid_countries
         available_years = covid_years
         df_source = covid_df
-    else:
+    elif disease == "Influenza (FluNet)":
         all_countries = flu_countries
         available_years = flu_years
         df_source = flu_df
+    else:
+        all_countries = diabetes_countries
+        available_years = diabetes_years
+        df_source = diabetes_df
     
     st.markdown("### Country Selection")
     # EMPTY default — no auto-selected countries
@@ -114,7 +174,7 @@ with st.sidebar:
 
 # ================= MAIN =================
 st.title("Multi-Disease Data Analyzer")
-st.markdown("Interactive dashboard for COVID-19 and Influenza (FluNet) data.")
+st.markdown("Interactive dashboard for COVID-19, Influenza (FluNet), and Diabetes (Worldwide) data.")
 
 if analyze_button:
     if not selected_countries:
@@ -138,13 +198,20 @@ if analyze_button:
             metric_label = "Confirmed Cases"
             new_label = "New Cases (Daily)"
             color_sequence = ["#60a5fa"]
-        else:
+        elif disease == "Influenza (FluNet)":
             df["Cases"] = pd.to_numeric(df["Cases"], errors='coerce').fillna(0)
             main_metric = "Cases"
             new_metric = "Cases"
             metric_label = "Influenza Positives"
             new_label = "Positives (Weekly)"
             color_sequence = ["#ef4444"]
+        else:  # Diabetes
+            df["Value"] = pd.to_numeric(df["Value"], errors='coerce').fillna(0)
+            main_metric = "Value"
+            new_metric = "Value"
+            metric_label = "Diabetes Prevalence (%)"
+            new_label = "Prevalence (%) Over Time"
+            color_sequence = ["#10b981"]
         
         years = sorted(df["Date"].dt.year.unique())
         
@@ -156,7 +223,13 @@ if analyze_button:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.subheader(country)
                 country_df = df[df["Country"] == country]
-                yearly = country_df.groupby(country_df["Date"].dt.year)[main_metric].sum().reindex(years, fill_value=0)
+
+                # Diabetes is prevalence (not cumulative), so use mean per year (safe)
+                if disease == "Diabetes (Worldwide)":
+                    yearly = country_df.groupby(country_df["Date"].dt.year)[main_metric].mean().reindex(years, fill_value=0)
+                else:
+                    yearly = country_df.groupby(country_df["Date"].dt.year)[main_metric].sum().reindex(years, fill_value=0)
+
                 fig = px.bar(yearly.reset_index(), x="Date", y=main_metric,
                              color_discrete_sequence=color_sequence,
                              labels={"Date": "Year", main_metric: metric_label})
@@ -169,7 +242,15 @@ if analyze_button:
         st.header(f"Yearly {metric_label} Comparison")
         with st.container():
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            comparison_data = {c: df[df["Country"] == c].groupby(df["Date"].dt.year)[main_metric].sum() for c in valid_countries}
+
+            comparison_data = {}
+            for c in valid_countries:
+                cdf = df[df["Country"] == c]
+                if disease == "Diabetes (Worldwide)":
+                    comparison_data[c] = cdf.groupby(cdf["Date"].dt.year)[main_metric].mean()
+                else:
+                    comparison_data[c] = cdf.groupby(cdf["Date"].dt.year)[main_metric].sum()
+
             comparison_df = pd.DataFrame(comparison_data).reindex(years, fill_value=0)
             melted = comparison_df.reset_index().melt(id_vars="Date", var_name="Country", value_name=metric_label)
             fig = px.bar(melted, x="Date", y=metric_label, color="Country", barmode="group")
@@ -203,22 +284,32 @@ if analyze_button:
                 if not country_data.empty:
                     latest = country_data.iloc[-1]
                     total_value = latest[main_metric]
-                    total_int = int(total_value) if pd.notna(total_value) else 0
-                    summary.append({
-                        "Country": country,
-                        "Latest Date": latest["Date"].date(),
-                        f"Total {metric_label}": total_int
-                    })
+
+                    if disease == "Diabetes (Worldwide)":
+                        summary.append({
+                            "Country": country,
+                            "Latest Date": latest["Date"].date(),
+                            f"Latest {metric_label}": float(total_value) if pd.notna(total_value) else 0.0
+                        })
+                    else:
+                        total_int = int(total_value) if pd.notna(total_value) else 0
+                        summary.append({
+                            "Country": country,
+                            "Latest Date": latest["Date"].date(),
+                            f"Total {metric_label}": total_int
+                        })
+
             summary_df = pd.DataFrame(summary).set_index("Country")
-            styled = summary_df.style.format({f"Total {metric_label}": "{:,.0f}"}).background_gradient(cmap="Blues")
+
+            if disease == "Diabetes (Worldwide)":
+                styled = summary_df.style.format({f"Latest {metric_label}": "{:.2f}"}).background_gradient(cmap="Greens")
+            else:
+                styled = summary_df.style.format({f"Total {metric_label}": "{:,.0f}"}).background_gradient(cmap="Blues")
+
             st.dataframe(styled, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
         
-        st.info("COVID-19: cumulative daily (up to 2022). Influenza: weekly positives (FluNet, recent).")
+        st.info("COVID-19: cumulative daily (up to 2022). Influenza: weekly positives (FluNet, recent). Diabetes: prevalence (%) by year.")
 
 else:
-
     st.info("👈 Select a disease, enter or choose countries in the sidebar, then click **Analyze Data** to generate the dashboard.")
-
-
-
